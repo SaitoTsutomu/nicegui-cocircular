@@ -12,6 +12,7 @@ import numpy as np
 from nicegui import ui
 
 type Point = tuple[int, int]
+LAST_CLICKED_COLOR = -1
 
 
 @dataclass(frozen=True)
@@ -29,15 +30,18 @@ class CenterRadius:
 
 def get_excenter(p0_: Point, p1_: Point, p2_: Point) -> CenterRadius:  # noqa: PLR0914
     """外心の中心と半径の2乗を返す"""
+    # 計算しやすくするため多次元配列に変換
     p0 = np.array(p0_, dtype=np.int64)
     p1 = np.array(p1_, dtype=np.int64)
     p2 = np.array(p2_, dtype=np.int64)
     if (p0 == p1).all() or (p1 == p2).all() or (p2 == p0).all():
         msg = "Three points must be different."
         raise ValueError(msg)
+    # 差分のノルム
     v01 = (p0 - p1) @ (p0 - p1)
     v12 = (p1 - p2) @ (p1 - p2)
     v20 = (p2 - p0) @ (p2 - p0)
+    # 中間結果
     w01 = v01 * (v12 + v20 - v01)
     w12 = v12 * (v20 + v01 - v12)
     w20 = v20 * (v01 + v12 - v20)
@@ -49,8 +53,10 @@ def get_excenter(p0_: Point, p1_: Point, p2_: Point) -> CenterRadius:  # noqa: P
         # yが同じ
         return CenterRadius(Fraction(0), Fraction(-1), Fraction(p0y))
     px, py = map(int, w12 * p0 + w20 * p1 + w01 * p2)
+    # 中心
     cx = Fraction(px, w)
     cy = Fraction(py, w)
+    # 半径の2乗
     radius2 = (cx - p0x) ** 2 + (cy - p0y) ** 2
     return CenterRadius(cx, cy, radius2)
 
@@ -134,11 +140,11 @@ class Game:
                 lst.add((y1, x1))
                 lst.add((y, x))
         if found:
-            self.circular[y, x] = -1
+            self.circular[y, x] = LAST_CLICKED_COLOR
             ui.notify("CoCircular!", type="positive")
 
 
-def run_game(*, port: int | None = None) -> None:
+def run_game(*, grid_size: int = 10, port: int | None = None) -> None:
     """ゲーム実行"""
-    Game(grid_size=10)
+    Game(grid_size=grid_size)
     ui.run(title="CoCircular", reload=False, port=port)
