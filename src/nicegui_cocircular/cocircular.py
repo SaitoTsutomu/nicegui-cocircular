@@ -6,6 +6,7 @@
 from dataclasses import dataclass
 from fractions import Fraction
 from itertools import product
+from logging import DEBUG, basicConfig, getLogger
 from typing import ClassVar
 
 import numpy as np
@@ -13,6 +14,7 @@ from nicegui import ui
 
 type Point = tuple[int, int]
 LAST_CLICKED_COLOR = -1
+logger = getLogger(__name__)
 
 
 @dataclass(frozen=True)
@@ -90,9 +92,10 @@ class Square(ui.button):
 class Game:
     """ゲーム"""
 
-    def __init__(self, *, grid_size: int) -> None:
+    def __init__(self, *, grid_size: int, show_cache: bool = False) -> None:
         """初期化"""
         self.cache: dict[CenterRadius, set[Point]] = {}
+        self.show_cache = show_cache
         self.grid_size = grid_size
         self.grid = np.zeros((grid_size, grid_size), dtype=bool)
         self.circular = np.full_like(self.grid, 0, dtype=np.int8)
@@ -109,18 +112,33 @@ class Game:
         self.grid.fill(0)
         self.circular.fill(0)
         self.refresh()
+        if self.show_cache:
+            logger.debug("Restart")
+
+    def point(self) -> int:
+        """ポイント"""
+        return self.grid.sum()
+
+    def game_over(self) -> bool:
+        """ゲームオーバーかどうかを返す"""
+        return self.circular.any()
 
     def refresh(self) -> None:
         """再描画"""
         for square in self.squares:
             square.build()
+        if self.game_over():
+            self.label.set_text(f"Game Over! ({self.point()} points)")
+        else:
+            self.label.set_text(f"Points: {self.point()}")
 
     def click(self, y: int, x: int) -> None:
         """点を置く"""
-        if not self.grid[y, x] and not self.circular.any():
-            self.judge(y, x)
-            self.grid[y, x] = True
-            self.refresh()
+        if self.grid[y, x] or self.game_over():
+            return
+        self.judge(y, x)
+        self.grid[y, x] = True
+        self.refresh()
 
     def judge(self, y: int, x: int) -> None:
         """判定"""
@@ -142,9 +160,13 @@ class Game:
         if found:
             self.circular[y, x] = LAST_CLICKED_COLOR
             ui.notify("CoCircular!", type="positive")
+            if self.show_cache:
+                for kv in self.cache.items():
+                    logger.debug(kv)
 
 
-def run_game(*, grid_size: int = 10, port: int | None = None) -> None:
+def run_game(*, grid_size: int = 10, show_cache: bool = False, port: int | None = None) -> None:
     """ゲーム実行"""
-    Game(grid_size=grid_size)
+    basicConfig(level=DEBUG, format="%(message)s")
+    Game(grid_size=grid_size, show_cache=show_cache)
     ui.run(title="CoCircular", reload=False, port=port)
