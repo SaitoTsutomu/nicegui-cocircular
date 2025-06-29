@@ -3,8 +3,6 @@
 格子をクリックして点を作成していき、4点が同心円になったらゲームオーバー
 """
 
-from dataclasses import dataclass
-from fractions import Fraction
 from itertools import product
 from logging import DEBUG, basicConfig, getLogger
 from typing import ClassVar
@@ -12,55 +10,10 @@ from typing import ClassVar
 import numpy as np
 from nicegui import ui
 
-type Point = tuple[int, int]
+from .feature import Feature, Point, get_feature
+
 LAST_CLICKED_COLOR = -1
 logger = getLogger(__name__)
-
-
-@dataclass(frozen=True)
-class CenterRadius:
-    """外心の中心と半径の2乗"""
-
-    center_x: Fraction
-    center_y: Fraction
-    radius2: Fraction
-
-    def __repr__(self) -> str:
-        """文字列化"""
-        return f"({float(self.center_x):.2f}, {float(self.center_y):.2f}): {self.radius2**0.5:.2f}"
-
-
-def get_excenter(p0_: Point, p1_: Point, p2_: Point) -> CenterRadius:  # noqa: PLR0914
-    """外心の中心と半径の2乗を返す"""
-    # 計算しやすくするため多次元配列に変換
-    p0 = np.array(p0_, dtype=np.int64)
-    p1 = np.array(p1_, dtype=np.int64)
-    p2 = np.array(p2_, dtype=np.int64)
-    if (p0 == p1).all() or (p1 == p2).all() or (p2 == p0).all():
-        msg = "Three points must be different."
-        raise ValueError(msg)
-    # 差分のノルム
-    v01 = (p0 - p1) @ (p0 - p1)
-    v12 = (p1 - p2) @ (p1 - p2)
-    v20 = (p2 - p0) @ (p2 - p0)
-    # 中間結果
-    w01 = v01 * (v12 + v20 - v01)
-    w12 = v12 * (v20 + v01 - v12)
-    w20 = v20 * (v01 + v12 - v20)
-    p0x, p0y = map(int, p0)
-    w = int(w01 + w12 + w20)
-    if w == 0:
-        if p0[0] == p1[0]:  # xが同じ
-            return CenterRadius(Fraction(-1), Fraction(0), Fraction(p0x))
-        # yが同じ
-        return CenterRadius(Fraction(0), Fraction(-1), Fraction(p0y))
-    px, py = map(int, w12 * p0 + w20 * p1 + w01 * p2)
-    # 中心
-    cx = Fraction(px, w)
-    cy = Fraction(py, w)
-    # 半径の2乗
-    radius2 = (cx - p0x) ** 2 + (cy - p0y) ** 2
-    return CenterRadius(cx, cy, radius2)
 
 
 class Square(ui.button):
@@ -94,7 +47,7 @@ class Game:
 
     def __init__(self, *, grid_size: int, show_cache: bool = False) -> None:
         """初期化"""
-        self.cache: dict[CenterRadius, set[Point]] = {}
+        self.cache: dict[Feature, set[Point]] = {}
         self.show_cache = show_cache
         self.grid_size = grid_size
         self.grid = np.zeros((grid_size, grid_size), dtype=bool)
@@ -111,6 +64,7 @@ class Game:
         self.cache.clear()
         self.grid.fill(0)
         self.circular.fill(0)
+        self.msg = "Click the grid."
         self.refresh()
         if self.show_cache:
             logger.debug("Restart")
@@ -127,10 +81,7 @@ class Game:
         """再描画"""
         for square in self.squares:
             square.build()
-        if self.game_over():
-            self.label.set_text(f"Game Over! ({self.point()} points)")
-        else:
-            self.label.set_text(f"Points: {self.point()}")
+        self.label.text = self.msg
 
     def click(self, y: int, x: int) -> None:
         """点を置く"""
@@ -143,23 +94,34 @@ class Game:
     def judge(self, y: int, x: int) -> None:
         """判定"""
         found = set()
+        n_found = 0
         indexes = [(j, i) for j, i in product(range(self.grid_size), range(self.grid_size)) if self.grid[j, i]]
         for k, (y0, x0) in enumerate(indexes):
             for y1, x1 in indexes[k + 1 :]:
-                key = get_excenter((y0, x0), (y1, x1), (y, x))
+                key = get_feature((x0, y0), (x1, y1), (x, y))  # 特徴計算時の引数のみx → yの順
                 if key not in self.cache:
                     self.cache[key] = lst = set()
                 else:
-                    found.add(key)
                     lst = self.cache[key]
-                    for j, i in lst:
-                        self.circular[j, i] = len(found)
+                    found.add(key)
+                    cur = len(found)
+                    if n_found < cur:
+                        n_found = cur
+                        for j, i in lst:
+                            self.circular[j, i] = n_found
                 lst.add((y0, x0))
                 lst.add((y1, x1))
                 lst.add((y, x))
-        if found:
+        if not found:
+            self.msg = f"{self.point() + 1} points."
+        else:
             self.circular[y, x] = LAST_CLICKED_COLOR
-            ui.notify("CoCircular!", type="positive")
+            status = f"({self.point() + 1} points, {n_found} circles)"
+            if n_found == 1:
+                self.msg, type_ = f"Failure {status}", "negative"
+            else:
+                self.msg, type_ = f"Success! {status}", "positive"
+            ui.notify(self.msg, type=type_)
             if self.show_cache:
                 for kv in self.cache.items():
                     logger.debug(kv)
